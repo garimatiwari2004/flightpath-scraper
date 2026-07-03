@@ -1,0 +1,15 @@
+{
+  "name": "flipkart-discount-checker",
+  "version": "1.0.0",
+  "description": "Flipkart product discount checker with webmail OTP and Excel card offers",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "install-browser": "npx playwright install chromium"
+  },
+  "dependencies": {
+    "exceljs": "^4.4.0",
+    "playwright": "^1.51.0"
+  }
+}
