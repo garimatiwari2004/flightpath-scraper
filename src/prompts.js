@@ -7,6 +7,11 @@ import { fileURLToPath } from 'node:url';
 const PROJECT_DIR = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const DEFAULT_EXCEL = path.join(PROJECT_DIR, 'cards.xlsx');
 
+const ENV_PATH = path.join(PROJECT_DIR, '.env');
+if (fs.existsSync(ENV_PATH)) {
+  process.loadEnvFile(ENV_PATH);
+}
+
 /**
  * @typedef {Object} UserInputs
  * @property {string} productUrl
@@ -31,9 +36,10 @@ function ask(rl, question) {
 
 /**
  * @param {string} question
+ * @param {string} [defaultValue]
  * @returns {Promise<string>}
  */
-function askSecret(question) {
+function askSecret(question, defaultValue = '') {
   return new Promise((resolve) => {
     process.stdout.write(question);
     const stdin = process.stdin;
@@ -49,7 +55,7 @@ function askSecret(question) {
         if (stdin.isTTY) stdin.setRawMode(wasRaw ?? false);
         stdin.pause();
         process.stdout.write('\n');
-        resolve(value.trim());
+        resolve(value.trim() || defaultValue);
         return;
       }
       if (char === '\u0003') {
@@ -76,16 +82,29 @@ export async function collectInputs() {
   const rl = readline.createInterface({ input, output });
 
   try {
-    const productUrl = await ask(rl, 'Product URL: ');
-    const maxPriceRaw = await ask(rl, 'Maximum price (INR): ');
+    const defaultProductUrl = process.env.PRODUCT_URL || '';
+    const productUrl =
+      (await ask(rl, defaultProductUrl ? `Product URL [${defaultProductUrl}]: ` : 'Product URL: ')) ||
+      defaultProductUrl;
+
+    const defaultMaxPrice = process.env.MAX_PRICE || '';
+    const maxPriceRaw =
+      (await ask(rl, defaultMaxPrice ? `Maximum price (INR) [${defaultMaxPrice}]: ` : 'Maximum price (INR): ')) ||
+      defaultMaxPrice;
     const maxPrice = Number(maxPriceRaw);
     if (!productUrl || Number.isNaN(maxPrice) || maxPrice <= 0) {
       throw new Error('Invalid product URL or maximum price.');
     }
 
-    const mailId = await ask(rl, 'Mail ID: ');
+    const defaultMailId = process.env.MAIL_ID || '';
+    const mailId =
+      (await ask(rl, defaultMailId ? `Mail ID [${defaultMailId}]: ` : 'Mail ID: ')) || defaultMailId;
     rl.close();
-    const mailPassword = await askSecret('Mail password: ');
+    const defaultMailPassword = process.env.MAIL_PASSWORD || '';
+    const mailPassword = await askSecret(
+      defaultMailPassword ? 'Mail password [leave blank to use saved]: ' : 'Mail password: ',
+      defaultMailPassword
+    );
     if (!mailId || !mailPassword) {
       throw new Error('Mail ID and password are required.');
     }

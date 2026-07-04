@@ -13,8 +13,10 @@ import {
   submitFlipkartOtp,
 } from './flipkart.js';
 import { FLIPKART } from './config.js';
+import { ensureDebugDir } from './debug.js';
 
 async function main() {
+  ensureDebugDir();
   const inputs = await collectInputs();
   const { workbook, worksheet, columns, rows } = await loadCardSheet(inputs.excelPath);
 
@@ -23,7 +25,7 @@ async function main() {
 
   const browser = await chromium.launch({
     headless: false,
-    slowMo: 80,
+    slowMo: 400,
   });
 
   try {
@@ -32,17 +34,22 @@ async function main() {
     const flipkartPage = await flipkartContext.newPage();
     const webmailPage = await webmailContext.newPage();
 
-    console.log('Logging into webmail...');
-    await loginWebmail(webmailPage, inputs.webmailUrl, inputs.mailId, inputs.mailPassword);
-
+    await flipkartPage.bringToFront();
     console.log('Requesting Flipkart OTP...');
     await requestFlipkartOtp(flipkartPage, inputs.mailId);
 
+    await webmailPage.bringToFront();
+    console.log('Logging into webmail...');
+    await loginWebmail(webmailPage, inputs.webmailUrl, inputs.mailId, inputs.mailPassword);
+
     console.log('Waiting for OTP in webmail inbox...');
     const otp = await waitForOtpEmail(webmailPage, inputs.mailType, FLIPKART.otpWaitMs);
-    console.log('OTP received. Logging into Flipkart...');
+    console.log('OTP received.');
 
+    await flipkartPage.bringToFront();
+    console.log('Submitting OTP to Flipkart...');
     await submitFlipkartOtp(flipkartPage, otp);
+    console.log('Logged into Flipkart.');
 
     console.log('Fetching product price and offers...');
     const productPrice = await getProductPrice(flipkartPage, inputs.productUrl);
