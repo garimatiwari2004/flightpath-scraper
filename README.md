@@ -1,6 +1,6 @@
 # Flipkart Discount Checker
 
-Node.js script that logs into Flipkart using OTP from cPanel webmail, reads card numbers from an Excel sheet, checks applicable bank/card offers for a product, and fills in discount + final price columns.
+Node.js script that logs into Flipkart using OTP from cPanel webmail, reads bank names from an Excel sheet, checks applicable non-EMI bank offers for a product, and fills in discount + final price columns.
 
 ## Setup
 
@@ -13,14 +13,16 @@ npm run install-browser
 
 First worksheet, row 1 = headers:
 
-| Card Number | Discount | Final Price | Eligible |
-|-------------|----------|-------------|----------|
-| 437551xxxxxx1234 | *(filled by script)* | *(filled)* | YES/NO |
+| Bank | Discount | Final Price | Eligible |
+|------|----------|-------------|----------|
+| Axis | *(filled by script)* | *(filled)* | YES/NO |
 
-- **Card Number** — full or partial card number (BIN is used for bank matching)
+- **Bank** — bank name to match against Flipkart's offer tiles (e.g. `Axis`, `HDFC Bank`, `ICICI`)
 - **Discount** — written by the script (e.g. `10%, max ₹1500`)
 - **Final Price** — product price minus discount
 - **Eligible** — `YES` if final price ≤ your maximum price, else `NO`
+
+Only offers whose payment-type footer includes Credit or Debit are considered — offers scoped to EMI only are ignored.
 
 ## Run
 
@@ -45,12 +47,11 @@ You will be prompted for:
 3. Requests Flipkart OTP on the login email
 4. Polls webmail inbox for the OTP email
 5. Completes Flipkart login
-6. Reads product price and scrapes bank offers
-7. For each card row: matches offer → calculates discount → writes Excel
+6. Reads product price and scrapes non-EMI bank offers
+7. For each bank row: matches best offer → calculates discount → writes Excel
 8. Marks rows **Eligible** when `final price ≤ maximum price`
 
 ## Notes
 
 - Flipkart UI selectors can change; you may need to update `src/flipkart.js` if login or offer scraping breaks.
-- Payment-page card checks are attempted when product-page offer matching fails (slower but more accurate).
 - Keep the browser window unobstructed while the script runs.

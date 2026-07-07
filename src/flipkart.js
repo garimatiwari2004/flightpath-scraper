@@ -1,40 +1,19 @@
 import { FLIPKART } from './config.js';
-import { cardBin } from './excel.js';
 import { captureDebugArtifacts } from './debug.js';
 import { firstVisibleLocator } from './dom.js';
 
-/** Common Indian card BIN prefixes → bank keyword used in Flipkart offers */
-const BIN_BANK_HINTS = {
-  '411111': 'visa',
-  '437551': 'hdfc',
-  '524368': 'hdfc',
-  '485498': 'icici',
-  '524193': 'icici',
-  '459150': 'sbi',
-  '420858': 'axis',
-  '524178': 'axis',
-  '540282': 'kotak',
-  '416021': 'indusind',
-  '436534': 'yes bank',
-  '457274': 'rbl',
-  '524254': 'idfc',
-};
-
 /**
- * @param {string} cardNumber
- * @returns {string[]}
+ * Strips "bank" and non-letters so "Axis Bank", "AXIS", "axis" all compare equal,
+ * and so it lines up with the bare keyword parseOfferText pulls out of offer text.
+ * @param {string} name
+ * @returns {string}
  */
-export function bankHintsForCard(cardNumber) {
-  const bin = cardBin(cardNumber);
-  const hints = new Set();
-  if (BIN_BANK_HINTS[bin]) hints.add(BIN_BANK_HINTS[bin]);
-  const prefix4 = bin.slice(0, 4);
-  if (prefix4 === '4375' || prefix4 === '5243') hints.add('hdfc');
-  if (prefix4 === '4854' || prefix4 === '5241') hints.add('icici');
-  if (prefix4 === '4591') hints.add('sbi');
-  if (prefix4 === '4208' || prefix4 === '5241') hints.add('axis');
-  hints.add(bin);
-  return [...hints];
+export function normalizeBankName(name) {
+  return String(name || '')
+    .toLowerCase()
+    .replace(/\bbank\b/g, '')
+    .replace(/[^a-z]/g, '')
+    .trim();
 }
 
 /**
@@ -224,7 +203,7 @@ export function parsePrice(text) {
 }
 
 /**
- * @typedef {{ raw: string, bankHint: string, percent?: number, flat?: number, maxDiscount?: number }} ParsedOffer
+ * @typedef {{ raw: string, bankHint: string, percent?: number, flat?: number, maxDiscount?: number, isEmiOnly: boolean }} ParsedOffer
  */
 
 /**
@@ -250,7 +229,15 @@ export function parseOfferText(offerText) {
   const maxDiscount = maxMatch ? Number(maxMatch[1].replace(/,/g, '')) : undefined;
 
   if (!percent && !flat) return null;
-  return { raw, bankHint, percent, flat, maxDiscount };
+
+  // Flipkart's offer tile footer names the payment methods it applies to (e.g. "Credit,
+  // Debit" or "EMI"). An offer whose footer says EMI without also saying Credit/Debit
+  // only pays out on EMI transactions, so it's not a real discount on a straight purchase.
+  const mentionsCreditOrDebit = /\bcredit\b|\bdebit\b/.test(lower);
+  const mentionsEmi = /\bemi\b/.test(lower);
+  const isEmiOnly = mentionsEmi && !mentionsCreditOrDebit;
+
+  return { raw, bankHint, percent, flat, maxDiscount, isEmiOnly };
 }
 
 /**
@@ -260,22 +247,33 @@ export function parseOfferText(offerText) {
 export async function scrapeProductOffers(page) {
   // Same React-Native-Web markup as the price (shared hashed classes, no stable hooks).
   // Each bank/wallet offer renders as a tile with an amount div whose own text is exactly
-  // "₹<amount> off" — the issuer name and payment-type text sit a few ancestor levels up
-  // in the same tile, so pull that ancestor's full text and let parseOfferText (which
-  // already matches bank keywords and ₹ amounts anywhere in the string) pick it apart.
+  // "₹<amount> off". The issuer name sits a few ancestor levels up in the same tile, and
+  // the "Credit, Debit"/"EMI" payment-type footer sits one level above that (verified from
+  // a real captured offer tile — footer is a sibling subtree of the amount+issuer content
+  // row, both hanging off the outer card div). Walk up levels until the payment-type text
+  // shows up so parseOfferText can see it and flag EMI-only offers.
   const amountLocator = page.locator('div, span').filter({ hasText: /^₹[\d,]+\s*off$/i });
   const count = await amountLocator.count();
   const offers = [];
 
   for (let i = 0; i < count; i++) {
     const amountEl = amountLocator.nth(i);
-    const cardText = await amountEl
-      .locator('xpath=ancestor::div[4]')
-      .first()
-      .innerText()
-      .catch(() => amountEl.innerText().catch(() => ''));
+    let cardText = '';
+    for (const depth of [5, 6, 4, 7]) {
+      const text = await amountEl
+        .locator(`xpath=ancestor::div[${depth}]`)
+        .first()
+        .innerText()
+        .catch(() => '');
+      if (text) {
+        cardText = text;
+        if (/\b(credit|debit|emi)\b/i.test(text)) break;
+      }
+    }
+    if (!cardText) cardText = await amountEl.innerText().catch(() => '');
+
     const parsed = parseOfferText(cardText);
-    if (parsed) offers.push(parsed);
+    if (parsed && !parsed.isEmiOnly) offers.push(parsed);
   }
 
   if (offers.length === 0) {
@@ -283,7 +281,7 @@ export async function scrapeProductOffers(page) {
     const lines = bodyText.split('\n').filter((line) => /%|₹|off|cashback|discount/i.test(line));
     for (const line of lines.slice(0, 40)) {
       const parsed = parseOfferText(line);
-      if (parsed) offers.push(parsed);
+      if (parsed && !parsed.isEmiOnly) offers.push(parsed);
     }
   }
 
@@ -306,21 +304,25 @@ function dedupeOffers(offers) {
 
 /**
  * @param {ParsedOffer[]} offers
- * @param {string} cardNumber
+ * @param {string} bankName
  * @returns {ParsedOffer|null}
  */
-export function matchOfferForCard(offers, cardNumber) {
-  const hints = bankHintsForCard(cardNumber);
+export function matchOfferForBank(offers, bankName) {
+  const needle = normalizeBankName(bankName);
+  if (!needle) return null;
+
   let best = null;
   let bestScore = 0;
 
   for (const offer of offers) {
+    if (offer.isEmiOnly) continue;
+
     let score = 0;
-    for (const hint of hints) {
-      if (offer.bankHint && offer.bankHint.includes(hint)) score += 3;
-      if (offer.raw.toLowerCase().includes(hint)) score += 2;
-    }
-    if (!offer.bankHint && hints.length === 1 && offer.raw.includes(hints[0])) score += 1;
+    const hintNormalized = normalizeBankName(offer.bankHint);
+    const rawNormalized = normalizeBankName(offer.raw);
+    if (hintNormalized && (hintNormalized.includes(needle) || needle.includes(hintNormalized))) score += 3;
+    if (rawNormalized.includes(needle)) score += 2;
+
     if (score > bestScore) {
       bestScore = score;
       best = offer;
@@ -354,44 +356,4 @@ export function calculateDiscount(offer, productPrice) {
   const label = labelParts.length ? labelParts.join(', ') : offer.raw;
 
   return { discountAmount: Math.round(discountAmount), label };
-}
-
-/**
- * @param {import('playwright').Page} page
- * @param {string} productUrl
- * @param {string} cardNumber
- * @returns {Promise<ParsedOffer|null>}
- */
-export async function checkPaymentPageOffer(page, productUrl, cardNumber) {
-  try {
-    await page.goto(productUrl, { waitUntil: 'domcontentloaded', timeout: FLIPKART.pageTimeoutMs });
-    await dismissFlipkartPopups(page);
-
-    const buyBtn = page.locator('button:has-text("Buy Now"), button:has-text("ADD TO CART")').first();
-    if (!(await buyBtn.isVisible().catch(() => false))) return null;
-    await buyBtn.click();
-    await page.waitForTimeout(3_000);
-
-    const placeOrder = page.locator('button:has-text("Place Order"), button:has-text("Continue")').first();
-    if (await placeOrder.isVisible().catch(() => false)) {
-      await placeOrder.click();
-      await page.waitForTimeout(3_000);
-    }
-
-    const cardInput = page.locator(
-      'input[name*="card"], input[placeholder*="Card"], input[autocomplete="cc-number"]'
-    ).first();
-    if (!(await cardInput.isVisible().catch(() => false))) return null;
-
-    await cardInput.fill(cardNumber.replace(/\D/g, '').slice(0, 16));
-    await page.waitForTimeout(2_500);
-
-    const offerText = await page.locator(
-      'div:has-text("instant discount"), div:has-text("cashback"), div:has-text("off on")'
-    ).first().innerText().catch(() => '');
-
-    return parseOfferText(offerText);
-  } catch {
-    return null;
-  }
 }

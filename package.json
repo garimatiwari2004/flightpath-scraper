@@ -1,7 +1,7 @@
 {
   "name": "flipkart-discount-checker",
   "version": "1.0.0",
-  "description": "Flipkart product discount checker with webmail OTP and Excel card offers",
+  "description": "Flipkart product discount checker with webmail OTP and Excel bank offers",
   "type": "module",
   "main": "src/index.js",
   "scripts": {

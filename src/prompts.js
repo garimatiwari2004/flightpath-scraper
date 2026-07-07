@@ -122,7 +122,7 @@ export async function collectInputs() {
 
       const excelPrompt = fs.existsSync(DEFAULT_EXCEL)
         ? `Excel file path [${DEFAULT_EXCEL}]: `
-        : 'Excel file path (card number + discount columns): ';
+        : 'Excel file path (bank name + discount columns): ';
       let excelPath = await ask(rl2, excelPrompt);
       excelPath = path.resolve((excelPath || DEFAULT_EXCEL).replace(/^["']|["']$/g, ''));
       if (!fs.existsSync(excelPath)) {
